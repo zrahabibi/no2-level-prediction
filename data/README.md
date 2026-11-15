@@ -1,0 +1,2 @@
+Place AirQualityUCI.csv (semicolon-separated, decimal commas) in this folder.
+It comes from the UCI Machine Learning Repository ("Air Quality" dataset). See the dataset page for the description, license and citation. The CSV is not committed to this repository.
