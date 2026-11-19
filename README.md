@@ -32,56 +32,55 @@ Metrics: accuracy, macro-F1, share of predictions within one class, mean class
 distance, share of errors falling between neighbouring classes, and share of errors
 that under-predict.
 
-## Findings (from my runs)
+## Findings
 
-Macro-F1 of the gradient-boosting classifier, 3 seeds for `random` and `block`
-(the `chrono` split is a single fixed split):
+Macro-F1, mean over 2 seeds (`python run_experiments.py --quick`). The `chrono`
+split is a single fixed split.
 
-| Features | random | block | chrono |
-|---|---|---|---|
-| all | 0.735 | 0.678 | 0.544 |
-| sensors | 0.663 | 0.604 | 0.490 |
-| sensors_time_lags | 0.688 | 0.627 | 0.506 |
+| Model | Features | random | block | chrono |
+|---|---|---|---|---|
+| gradient boosting | all | 0.742 | 0.700 | 0.544 |
+| gradient boosting | sensors | 0.662 | 0.620 | 0.490 |
+| neural network | all | 0.722 | 0.643 | 0.465 |
+| neural network | sensors | 0.650 | 0.605 | 0.456 |
 
 1. **A random split over-estimates performance.** Moving from random hours to random
-   weeks costs about 0.06 macro-F1, which I attribute to dependence between
-   neighbouring hours. Moving from weeks to the chronological split costs another
-   0.12–0.13, which I attribute to a shift in the data over time. The cause of that
-   shift (season or sensor drift) was **not** tested.
-2. **Errors change character.** On random and block splits, errors are roughly
-   symmetric (about half under-predict). On the chronological split 84–92% of the
-   errors under-predict. The test period has about 53% of its samples in the top
-   class (against 20% in training), so NO₂ levels were higher there.
-3. **Most errors are between neighbouring classes.** With all features, about 95% of
-   errors fall between adjacent classes and 98–99% of predictions are within one class
-   (87–92% adjacent errors with sensors only). Extreme classes are classified more
-   accurately than the middle ones.
-4. **One reference measurement dominates.** With the reference analyzers available,
-   shuffling `NOx(GT)` drops macro-F1 by about 0.29 in an earlier run, while every other
-   feature drops it by less than 0.02. NOx includes NO₂, so the `sensors` setting is the
-   more meaningful one: it is about 0.08 lower under a random split. Permutation
-   importance with correlated features should not be over-interpreted.
-5. **Gradient boosting matched or beat the neural network** in every setting I ran,
-   by more under the chronological split (2 seeds; macro-F1, `all` features):
+   weeks costs 0.04–0.08 macro-F1, which I attribute to dependence between neighbouring
+   hours. Moving on to the chronological split costs a further 0.13–0.18, which I
+   attribute to the data changing over time. The cause (season or sensor drift) was not
+   tested, and the chronological test period also has a different class mix.
+2. **Errors change character.** On the random split roughly half of the errors
+   under-predict; on the chronological split 80–94% do, for both models. The test
+   period has about 53% of its samples in the top class (against 20% in training).
+3. **Most errors are between neighbouring classes.** On the random split with all
+   features, about 95% of errors fall between adjacent classes and 98–99% of predictions
+   are within one class (about 88% adjacent with sensors only).
+4. **One reference measurement dominates.** For gradient boosting with all features,
+   shuffling `NOx(GT)` drops macro-F1 by about 0.28 on the chronological test set,
+   against 0.04 or less for every other feature. NOx includes NO₂, so the `sensors`
+   setting is the more meaningful one: it is 0.07–0.08 lower under a random split. With
+   sensors only, `PT08.S2(NMHC)` matters most (0.17).
+5. **Gradient boosting matched or beat the neural network** in all six comparisons,
+   by more under the chronological split.
 
-   | | hgb_clf | hgb_reg | mlp_plain | mlp_reg |
-   |---|---|---|---|---|
-   | random | 0.742 | 0.731 | 0.725 | 0.718 |
-   | chrono | 0.544 | 0.580 | 0.478 | 0.449 |
+![Macro-F1 by split](results/macro_f1_by_split.png)
 
-   BatchNorm and Dropout had no consistent effect. Raw hour/day features did not help;
-   cyclical time and lag features gave small gains (+0.02 to +0.03) in the
-   `sensors` setting. Regression-then-binning equalled classification on random splits
-   and was 0.03–0.04 better on the chronological split.
+
+
+
+![Confusion matrices](results/confusion_sensors_random_vs_chrono.png)
 
 ## Limitations
 
-- Two or three seeds; differences of about 0.01–0.02 are within noise.
-- The chronological split has a single test period, so its numbers have no standard
-  deviation for the deterministic gradient-boosting models.
+- Two seeds; neural-network results on the `block` split are noisy (std up to 0.07).
+- The chronological split has a single test period, so gradient boosting has no
+  standard deviation there.
 - The cause of the shift over time is a hypothesis.
-- One dataset from one site, about one year of hourly data.
-- Neural-network results vary slightly between machines and TensorFlow versions.
+- Permutation importance was computed for gradient boosting only, and features are correlated.
+- Keras `validation_split` uses the last 20% of the training rows: random rows on the
+  random split, the latest part of the training period on `block` and `chrono`.
+- Neural-network results are not bit-for-bit reproducible across machines.
+- One dataset, one site, about one year of hourly data.
 
 ## Run it
 
