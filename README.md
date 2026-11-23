@@ -1,111 +1,148 @@
-# NO₂ level prediction: how the evaluation protocol changes the conclusions
+# Predicting NO₂ levels: how the train/test split changes the results
 
-A small study on the UCI Air Quality dataset. A model that looks good on randomly
-held-out hours performs much worse on later months, and its errors change character.
-The repository contains the code behind that comparison.
+This is a small project on the UCI Air Quality dataset. The data are hourly sensor
+readings, so rows that are next to each other are very similar. I wanted to see how
+much the way I split the data into training and test sets changes the scores, and what
+happens to the errors.
 
 ## Task
 
-Predict the **NO₂ concentration level** (`NO2(GT)`), discretised into five
-equal-frequency classes, from the other sensors and weather variables. This is
-not the Air Quality Index. Class edges are computed on the training part only.
+The dataset has 7,715 labelled hourly rows, from 2004-03-10 to 2005-04-04. I predict
+the level of NO₂ (column `NO2(GT)`) from the other columns. The level is cut into five
+classes with the same number of samples in each. The class edges are computed on the
+training part only. This is not the Air Quality Index.
 
-Two kinds of inputs exist in the data:
+The other columns are of two kinds. `CO(GT)`, `C6H6(GT)` and `NOx(GT)` are measured by
+reference analyzers. The rest (`PT08.S1` to `PT08.S5`, temperature, humidity) come from
+cheap sensors and weather. A low-cost device would only have the second kind, so I
+also run everything with the sensors only.
 
-- **Reference analyzers** (`CO(GT)`, `C6H6(GT)`, `NOx(GT)`): expensive, accurate measurements.
-- **Low-cost sensors and weather** (`PT08.S1…S5`, `T`, `RH`, `AH`): the realistic input
-  for a cheap monitoring device.
+## What I ran
 
-## What is compared
+Three splits:
 
-| Dimension | Options |
-|---|---|
-| Split | `random` hours · `block` (random whole weeks) · `chrono` (last 20% of the timeline is the test set) |
-| Features | `all` · `all_rawtime` (+ raw hour/day) · `all_time_lags` (+ cyclical time + lags) · `sensors` (no reference analyzers) · `sensors_time_lags` |
-| Models | feedforward network (128-64-32), with (`mlp_reg`) and without (`mlp_plain`) BatchNorm + Dropout · gradient boosting classifier (`hgb_clf`) · gradient boosting regressor with predictions binned into classes (`hgb_reg`) |
+- `random`: random hours.
+- `block`: random whole weeks, so hours from the same week are never on both sides.
+- `chrono`: the first 80% of the timeline for training, the last 20% for testing.
 
-Preprocessing (median imputation, standard scaling) is fitted on the training part
-only. `-200` marks missing readings. Lag features (previous hour, mean of the previous
-three hours) use past values only.
+Five feature sets: `all` (every column except the target), `sensors` (without the
+three reference columns), `all_rawtime` (all plus raw hour and weekday), and
+`all_time_lags` and `sensors_time_lags` (cyclical hour and weekday plus lag features).
+A lag feature is the value one hour earlier, or the mean of the three hours before. Only
+earlier hours are used.
 
-Metrics: accuracy, macro-F1, share of predictions within one class, mean class
-distance, share of errors falling between neighbouring classes, and share of errors
-that under-predict.
+Four models: a gradient boosting classifier (`hgb_clf`), a gradient boosting regressor
+whose output is cut into the five classes (`hgb_reg`), and a feedforward network with
+three hidden layers (128, 64, 32), with BatchNorm and Dropout (`mlp_reg`) or without
+(`mlp_plain`). The network uses early stopping.
 
-## Findings
+Missing values (-200 in the file) are replaced by the median of the training part, and
+the features are scaled with the training mean and standard deviation. The main score is
+macro-F1. `results_*/summary.csv` also has accuracy, the share of predictions that are
+at most one class away, and how the errors are spread.
 
-Macro-F1, mean over 2 seeds (`python run_experiments.py --quick`). The `chrono`
-split is a single fixed split.
+## Results
+
+Macro-F1, mean of 3 seeds. The `chrono` split is one fixed split, so gradient boosting
+gives a single number there.
 
 | Model | Features | random | block | chrono |
 |---|---|---|---|---|
-| gradient boosting | all | 0.742 | 0.700 | 0.544 |
-| gradient boosting | sensors | 0.662 | 0.620 | 0.490 |
-| neural network | all | 0.722 | 0.643 | 0.465 |
-| neural network | sensors | 0.650 | 0.605 | 0.456 |
+| gradient boosting | all | 0.735 | 0.678 | 0.544 |
+| gradient boosting | sensors | 0.663 | 0.604 | 0.490 |
+| network, BatchNorm + Dropout | all | 0.725 | 0.649 | 0.477 |
+| network, BatchNorm + Dropout | sensors | 0.660 | 0.601 | 0.450 |
+| network, plain | all | 0.721 | 0.655 | 0.497 |
+| network, plain | sensors | 0.652 | 0.580 | 0.448 |
 
-1. **A random split over-estimates performance.** Moving from random hours to random
-   weeks costs 0.04–0.08 macro-F1, which I attribute to dependence between neighbouring
-   hours. Moving on to the chronological split costs a further 0.13–0.18, which I
-   attribute to the data changing over time. The cause (season or sensor drift) was not
-   tested, and the chronological test period also has a different class mix.
-2. **Errors change character.** On the random split roughly half of the errors
-   under-predict; on the chronological split 80–94% do, for both models. The test
-   period has about 53% of its samples in the top class (against 20% in training).
-3. **Most errors are between neighbouring classes.** On the random split with all
-   features, about 95% of errors fall between adjacent classes and 98–99% of predictions
-   are within one class (about 88% adjacent with sensors only).
-4. **One reference measurement dominates.** For gradient boosting with all features,
-   shuffling `NOx(GT)` drops macro-F1 by about 0.28 on the chronological test set,
-   against 0.04 or less for every other feature. NOx includes NO₂, so the `sensors`
-   setting is the more meaningful one: it is 0.07–0.08 lower under a random split. With
-   sensors only, `PT08.S2(NMHC)` matters most (0.17).
-5. **Gradient boosting matched or beat the neural network** in all six comparisons,
-   by more under the chronological split.
+![Macro-F1 by split](results_gb/macro_f1_by_split.png)
 
-![Macro-F1 by split](results/macro_f1_by_split.png)
+All models do worse when the split follows time. Going from random hours to random weeks
+costs about 0.06 to 0.08 macro-F1, and going on to the chronological split costs another
+0.11 to 0.17. My reading is that the first drop comes from neighbouring hours being
+similar, so a random split lets the model see almost the same row in training. The
+second drop probably comes from the data changing over time. I did not test why it
+changes (season or sensor drift). The test period also has a different mix of classes:
+813 of the 1,543 test rows are in the top class, against 20% in training, so NO₂ was
+higher there.
 
+The errors change too. On the random split about half of them are under-predictions
+(0.45 to 0.50). On the chronological split most of them are: 84 to 95% for gradient
+boosting and 78 to 93% for the network. In the saved confusion matrix of the network
+(`chrono`, all features, seed 0), 626 of 710 errors are under-predictions. The top class
+is the main source: 349 of its 813 rows were predicted as a lower class, and none as a
+higher one. It is not only the top class: 147 of the 192 rows of class 2 were also
+predicted lower.
 
+![Confusion matrices, random and chrono](results_gb/confusion_sensors_random_vs_chrono.png)
 
+On the random split with all features, about 94 to 96% of the errors are between
+neighbouring classes, and 98 to 99% of the predictions are at most one class off. The
+two outer classes are predicted better than the middle ones. For gradient boosting the
+F1 of the five classes is 0.91, 0.74, 0.65, 0.64 and 0.85, and the network shows the
+same pattern. With the sensors only, about 87% of the errors are between neighbouring
+classes. On the chronological split this share is lower (75 to 88%).
 
-![Confusion matrices](results/confusion_sensors_random_vs_chrono.png)
+With the reference analyzers, gradient boosting depends mostly on one column. Shuffling
+`NOx(GT)` in the `chrono` test set lowers macro-F1 by 0.28, and the next column lowers
+it by 0.04. NOx includes NO₂, so this is not a surprise, but it means the `all` results
+mostly tell how well NO₂ can be read from NOx. With the sensors only the scores are
+lower, by about 0.07 for every model on the random split. The most important columns are
+then `PT08.S2(NMHC)` (0.17), `PT08.S5(O3)` (0.08) and absolute humidity `AH` (0.07). The
+columns are correlated, so I would not read too much into these numbers.
 
-## Limitations
+Gradient boosting was ahead of the networks or equal in every comparison. On the random
+and block splits the gaps (up to about 0.03) are within the seed noise. On the
+chronological split the gap is clear: 0.544 against 0.48 to 0.50 with all features, and
+0.49 against 0.45 with the sensors only. BatchNorm and Dropout did not make a clear
+difference (changes between -0.02 and +0.02).
 
-- Two seeds; neural-network results on the `block` split are noisy (std up to 0.07).
-- The chronological split has a single test period, so gradient boosting has no
-  standard deviation there.
-- The cause of the shift over time is a hypothesis.
-- Permutation importance was computed for gradient boosting only, and features are correlated.
-- Keras `validation_split` uses the last 20% of the training rows: random rows on the
-  random split, the latest part of the training period on `block` and `chrono`.
-- Neural-network results are not bit-for-bit reproducible across machines.
-- One dataset, one site, about one year of hourly data.
+Some smaller things, for gradient boosting with 3 seeds. Raw hour and weekday changed
+macro-F1 by -0.01 to +0.02, which is within the noise. Cyclical time plus lag features
+helped a little in every split, by +0.01 to +0.05, more with the sensors only. Predicting
+the concentration with a regressor and then cutting it into classes gave about the same
+macro-F1 on random splits (within 0.02), a bit more on block splits (+0.01 to +0.02),
+and 0.03 to 0.05 more on the chronological split.
 
-## Run it
+## Limits
 
-```bash
+- I used 3 seeds. The `block` split changes a lot with the weeks that are drawn (the
+  standard deviation of macro-F1 is up to about 0.06).
+- The chronological split is one test period, so there is no standard deviation for
+  gradient boosting there.
+- I do not know why the data change over time. I only know that the scores get worse.
+- The network does not give the same numbers when I run it again with the same seeds,
+  because TensorFlow is not fully deterministic. I ran the network experiments twice
+  with the same code: the means of macro-F1 differed by up to about 0.01 and single
+  seeds by up to about 0.05. I would not trust smaller differences between the networks.
+- The confusion matrices, reports and importance values come from a separate training
+  run with seed 0. For the network the numbers quoted above change a bit from run to run,
+  and they do not match the seed 0 row of `runs.csv` exactly.
+- Permutation importance was computed for gradient boosting only.
+- Keras `validation_split` takes the last 20% of the training rows. On the random split
+  these are random rows, on `block` and `chrono` they are the latest part of the
+  training period.
+- It is one dataset from one place, about one year of hourly data.
+
+## Running it
+
+```
 pip install -r requirements.txt
-# download AirQualityUCI.csv into data/ (see data/README.md)
-
-python run_experiments.py --quick                    # lighter run
-python run_experiments.py --models hgb_clf hgb_reg   # gradient boosting only, no TensorFlow
-python run_experiments.py --seeds 5                  # fuller run
+python run_experiments.py --models hgb_clf hgb_reg --seeds 3 --out results_gb
+python run_experiments.py --models mlp_plain mlp_reg --features all sensors --seeds 3 --out results_nn
 ```
 
-The neural-network runs are the slow part. To keep CPU use down on a laptop, limit
-threads first, e.g. `OMP_NUM_THREADS=2 python run_experiments.py --quick`
-(on Windows: `set OMP_NUM_THREADS=2`).
+`python run_experiments.py --quick` is a lighter run. The networks are the slow part. If
+your computer gets hot, set `OMP_NUM_THREADS=2` first, or run `colab_run.ipynb` on Google
+Colab (a CPU runtime is enough). The dataset is not in this repository, see
+`data/README.md`.
 
-Outputs are written to `results/`: `runs.csv` (every run), `summary.csv` (mean and
-standard deviation over seeds), confusion matrices and per-class reports,
-permutation importance (CSV and figures), and `macro_f1_by_split.png`.
+## Files
 
-## Layout
-
-```
-no2_pipeline.py     data loading, features, splits, models, metrics
-run_experiments.py  experiment grid, diagnostics, figures
-data/               put AirQualityUCI.csv here (not committed)
-results/            generated outputs
-```
+- `no2_pipeline.py`: loading, features, splits, models and metrics.
+- `run_experiments.py`: runs the experiments, saves tables and figures.
+- `colab_run.ipynb`: the same on Google Colab.
+- `results_gb/`: gradient boosting, all feature sets, 3 seeds.
+- `results_nn/`: networks, `all` and `sensors`, 3 seeds.
+- `results_quick/`: a first, lighter run (`--quick`, 2 seeds). Its network numbers differ
+  a little from `results_nn/`, because of the run-to-run differences described above.
